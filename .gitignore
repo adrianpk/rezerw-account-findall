@@ -1,0 +1,10 @@
+main
+development.zip
+*.bak
+**/*.bak
+.vscode/launch.json
+../.vscode/
+godel
+godelw
+docs/log.md
+docs/lambdas
