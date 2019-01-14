@@ -2,13 +2,14 @@ package main
 
 import (
 	"encoding/json"
-	"net/http"
-	"time"
+	"os"
 
+	rz "github.com/adrianpk/rezerw/core"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-
-	uuid "github.com/satori/go.uuid"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/external"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
 var (
@@ -16,57 +17,44 @@ var (
 	ctVal = "application/json"
 )
 
-type account struct {
-	ID          uuid.UUID `json:"id" schema:"id"`
-	Name        string    `json:"name" schema:"name"`
-	Description string    `json:"description" schema:"description"`
-	AccountType string    `json:"accountType" schema:"account-type"`
-	OwnerID     uuid.UUID `json:"ownerID" schema:"owner-id"`
-	ParentID    uuid.UUID `json:"parentID" schema:"parent-id"`
-	Email       string    `json:"email" schema:"email"`
-	CreatedBy   uuid.UUID `json:"CreatedBy,omitempty" schema:"-"`
-	UpdatedBy   uuid.UUID `json:"UpdatedBy,omitempty" schema:"-"`
-	CreatedAt   time.Time `json:"createdAt,omitempty" schema:"-"`
-	UpdatedAt   time.Time `json:"updatedAt,omitempty" schema:"-"`
+// Account - Account
+type Account struct {
+	ID          string `schema:"id"`
+	Name        string `json:"Name" schema:"name"`
+	Description string `json:"Description" schema:"description"`
+	AccountType string `json:"AccountType" schema:"account-type"`
 }
 
 func findAll() (events.APIGatewayProxyResponse, error) {
-	accounts := sampleAccounts()
-	response, err := json.Marshal(accounts)
-	// Error
+	// Config
+	cfg, err := external.LoadDefaultAWSConfig()
 	if err != nil {
-		return events.APIGatewayProxyResponse{}, err
+		return rz.RenderError(err, "Error while retrieving credentials")
 	}
-	// Ok
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Headers: map[string]string{
-			ct: ctVal,
-		},
-		Body: string(response),
-	}, nil
-}
-
-func sampleAccounts() []account {
-	accounts := make([]account, 0)
-	if u1, ok := toUUID("568aabd8-c431-485f-845a-c447083ab287"); ok {
-		a1 := account{ID: u1, Name: "Account1"}
-		accounts = append(accounts, a1)
-	}
-	if u2, ok := toUUID("338681c2-fb4b-4448-957a-297729eab4a8"); ok {
-		a2 := account{ID: u2, Name: "Account2"}
-		accounts = append(accounts, a2)
-	}
-	return accounts
-}
-
-func toUUID(idStr string) (uuid.UUID, bool) {
-	u, err := uuid.FromString(idStr)
+	// DynamoDB
+	svc := dynamodb.New(cfg)
+	req := svc.ScanRequest(&dynamodb.ScanInput{
+		TableName: aws.String(os.Getenv("TABLE_NAME")),
+	})
+	dbRes, err := req.Send()
 	if err != nil {
-		u, _ = uuid.FromString("00000000-0000-0000-0000-000000000000")
-		return u, false
+		return rz.RenderError(err, "Error while scanning data")
 	}
-	return u, true
+	// Populate
+	accounts := make([]Account, 0)
+	for _, item := range dbRes.Items {
+		accounts = append(accounts, Account{
+			ID:   *item["ID"].S,
+			Name: *item["Name"].S,
+		})
+	}
+	// Marshall
+	res, err := json.Marshal(accounts)
+	if err != nil {
+		return rz.RenderError(err, "Error while decoding response")
+	}
+	// Response
+	return rz.RenderOk(res)
 }
 
 func main() {
